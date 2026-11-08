@@ -51,7 +51,9 @@ sudo bash vm-ssh-bootstrap.sh
 | --- | --- |
 | `--port`, `-p N` | Listen on port `N` (validated, 1-65535). Writes the port into `sshd_config`, replacing any existing `Port` line. |
 | `--pubkey`, `-k K` | Install public key `K` for the login user and leave password auth at the image's default. |
-| `--status` | Read-only report: sshd path, service state, listening socket, login user, address. No root needed. |
+| `--status` | Read-only report: distro, sshd path, service state, listening socket, config, firewall, login user, address. No root needed. |
+| `--debug`, `-d` | Print every command's output and trace each command into the transcript. |
+| `--log PATH` | Transcript path (default `/tmp/vm-ssh-bootstrap.<epoch>.log`). |
 | `--help`, `-h` | Usage. |
 
 ## What it does
@@ -66,6 +68,27 @@ sudo bash vm-ssh-bootstrap.sh
    non-zero **without restarting anything**.
 6. Enables and starts the service, and opens the port in UFW or firewalld.
 7. Prints the `ssh` / `ssh-copy-id` / `scp` lines for your client machine.
+
+## When something fails
+
+Every run writes a transcript and prints its path in the summary (`cat` it to
+paste into an issue). Each of the seven steps reports what it found, what it
+changed and what it skipped, so a failed run reads like a timeline rather than a
+single error line. Failures print the failing tool's own output plus follow-up
+checks:
+
+- **apt can't build a plan** (`pkgProblemResolver::Resolve generated breaks`) —
+  you get `dpkg --audit`, `apt-mark showhold`, `apt-cache policy`, the codenames
+  in your apt sources, free space, DNS resolution, and a simulated
+  (`-s`, changes nothing) resolver run that names the package it is fighting.
+- **`sshd -t` rejects the config** — the full error, a diff against the backup,
+  and the automatic restore, all before any restart.
+- **The service won't start** — `systemctl status`, the last 30 journal lines,
+  the sshd version, and the current listeners.
+- **An unexpected exit** — the exact script line and command, via an `ERR` trap.
+
+`--debug` adds every command's stdout/stderr on the console and a full command
+trace inside the transcript.
 
 ## Reaching the VM from another machine
 
