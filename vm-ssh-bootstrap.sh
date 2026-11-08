@@ -284,6 +284,7 @@ print_fingerprint() {
     say "  distro:       $(os_release_value PRETTY_NAME) [codename $(os_release_value VERSION_CODENAME)]"
     say "  kernel:       $(uname -srm 2>/dev/null || echo unknown)"
     say "  init:         $(ps -p 1 -o comm= 2>/dev/null || echo unknown)"
+    say "  arch:         $(dpkg --print-architecture 2>/dev/null || uname -m 2>/dev/null || echo unknown) / foreign: $(dpkg --print-foreign-architectures 2>/dev/null | paste -sd' ' - | sed 's/^$/none/' || true)"
     say "  running as:   $(id -un 2>/dev/null || echo unknown) (uid ${EUID}), login user: ${TARGET_USER}"
     say "  script:       v${SCRIPT_VERSION}"
     say "  transcript:   ${LOG_FILE}"
@@ -408,6 +409,34 @@ fi
 # =============================================================================
 #  Failure diagnostics
 # =============================================================================
+# Name the most common root causes outright instead of leaving the reader to
+# interpret a resolver trace. Each check is cheap and read-only.
+apt_verdicts() {
+    local cand="" foreign="" sync_state=""
+    cand="$(apt-cache policy libtinfo6 2>/dev/null | awk '/Candidate:/ {print $2; exit}' || true)"
+    if [[ -z "$cand" || "$cand" == "(none)" ]]; then
+        warn "VERDICT: apt has no candidate for libtinfo6."
+        warn "  That is a base library present in every Ubuntu/Mint archive, so apt's"
+        warn "  package lists are incomplete or aimed at the wrong release. Check the"
+        warn "  'apt-get update' output above, the source codenames, and the clock."
+        warn "  Every 'not installable' line in the resolver trace follows from this."
+    fi
+    foreign="$(dpkg --print-foreign-architectures 2>/dev/null | paste -sd' ' - || true)"
+    if [[ -n "$foreign" ]]; then
+        warn "VERDICT: foreign architecture enabled (${foreign})."
+        warn "  Without a repository for it, Depends chains such as zlib1g:i386 ->"
+        warn "  libc6:i386 can never resolve. If no ${foreign} packages are installed:"
+        warn "    dpkg --remove-architecture ${foreign}"
+    fi
+    sync_state="$(timedatectl 2>/dev/null | awk -F': ' '/System clock synchronized/ {print $2; exit}' || true)"
+    if [[ "$sync_state" == "no" ]]; then
+        warn "VERDICT: system clock is not synchronized."
+        warn "  A skewed clock makes apt reject 'Release' files, which empties its view"
+        warn "  of the archive. Fix the clock, then re-run apt-get update."
+    fi
+    return 0
+}
+
 apt_diagnostics() {
     local body=""
     warn "=== apt diagnostics ==="
@@ -430,10 +459,22 @@ apt_diagnostics() {
     diag_block "resolver reasoning (simulated install)" "$(
         apt-get -s -o Debug::pkgProblemResolver=yes install openssh-server 2>&1 | head -30 || true
     )"
+    diag_block "architectures" "native:  $(dpkg --print-architecture 2>/dev/null || echo unknown)
+foreign: $(dpkg --print-foreign-architectures 2>/dev/null | paste -sd' ' - | sed 's/^$/none/' || true)"
+    diag_block "candidates for base packages (empty means apt cannot see them)" "$(
+        apt-cache policy libc6 libtinfo6 libudev1 zlib1g util-linux shim-signed 2>/dev/null \
+            | grep -E '^[a-z0-9.+-]+:|Candidate:' | head -24 || true
+    )"
+    diag_block "apt list health" "index files:   $(n=0; for f in /var/lib/apt/lists/*_Packages; do [[ -e "$f" ]] && n=$((n + 1)); done; echo "$n")
+partial files: $(ls -1 /var/lib/apt/lists/partial 2>/dev/null | wc -l | tr -d ' ' || true)
+newest entry:  $(ls -lt /var/lib/apt/lists 2>/dev/null | sed -n '2p' | awk '{print $6, $7, $8, $9}' || true)"
+    diag_block "clock (a skewed clock invalidates Release files)" "now:  $(date -Is 2>/dev/null || date 2>/dev/null || echo unknown)
+sync: $(timedatectl 2>/dev/null | grep -E 'System clock synchronized|NTP service' | paste -sd';' - || echo 'timedatectl unavailable')"
     diag_block "free space" "$(df -h / /var 2>/dev/null | awk 'NR==1 || !seen[$1]++' || true)"
     diag_block "dns resolution" "$(getent hosts archive.ubuntu.com 2>&1 || getent hosts deb.debian.org 2>&1 || true)"
     diag_block "failed systemd units" "$(systemctl --failed --no-pager --no-legend 2>/dev/null | head -10 || true)"
 
+    apt_verdicts
     warn "  If this is a held package, prefer the scenario README over"
     warn "  'apt-mark unhold': holds on a scored image are sometimes deliberate."
     warn "=== end apt diagnostics ==="
