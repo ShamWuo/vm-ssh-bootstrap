@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: bash -n vm-ssh-bootstrap.sh
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning vm-ssh-bootstrap.sh
+
+      - name: CLI contract
+        run: |
+          set -u
+          bash vm-ssh-bootstrap.sh --help > /dev/null
+          if bash vm-ssh-bootstrap.sh --port abc > /dev/null 2>&1; then
+            echo "expected --port abc to fail"; exit 1
+          fi
+          if bash vm-ssh-bootstrap.sh --port 0 > /dev/null 2>&1; then
+            echo "expected --port 0 to fail"; exit 1
+          fi
+          if bash vm-ssh-bootstrap.sh --port 70000 > /dev/null 2>&1; then
+            echo "expected --port 70000 to fail"; exit 1
+          fi
+          if bash vm-ssh-bootstrap.sh --nope > /dev/null 2>&1; then
+            echo "expected unknown flag to fail"; exit 1
+          fi
+          echo "CLI contract OK"
