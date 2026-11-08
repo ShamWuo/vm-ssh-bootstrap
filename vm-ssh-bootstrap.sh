@@ -187,8 +187,7 @@ fi
 # ----- Root check -------------------------------------------------------------
 if [[ $EUID -ne 0 && $STATUS_ONLY -eq 0 ]]; then
     die "must run as root to install sshd and open the firewall.
-    Re-run as root: sudo bash vm-ssh-bootstrap.sh
-    Or non-interactively: curl -fsSL <script-url> | sudo bash"
+    Re-run as root: sudo bash vm-ssh-bootstrap.sh"
 fi
 
 # =============================================================================
